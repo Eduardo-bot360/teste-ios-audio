@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Teste de áudio iOS</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0e1116">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Teste áudio">
+<link rel="apple-touch-icon" href="icone-192.png">
+<style>
+  :root{
+    --bg:#0e1116; --bg2:#161b22; --bg3:#1e242d; --linha:#2b323c;
+    --txt:#e6edf3; --txt2:#9aa6b2;
+    --bom:#3fb950; --ruim:#f85149; --atencao:#d29922; --acao:#2f81f7;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  header{padding:18px 16px 10px;border-bottom:1px solid var(--linha);position:sticky;top:0;background:var(--bg);z-index:5}
+  h1{margin:0;font-size:19px;letter-spacing:-.01em}
+  header p{margin:4px 0 0;color:var(--txt2);font-size:13px}
+  .abas{display:flex;gap:6px;overflow-x:auto;padding:10px 16px 0;scrollbar-width:none}
+  .abas::-webkit-scrollbar{display:none}
+  .aba{flex:0 0 auto;background:var(--bg2);color:var(--txt2);border:1px solid var(--linha);
+    border-radius:999px;padding:8px 14px;font-size:14px;font-weight:500}
+  .aba.ativa{background:var(--acao);color:#fff;border-color:var(--acao)}
+  main{padding:14px 16px 60px}
+  .painel.oculto{display:none}
+  section{background:var(--bg2);border:1px solid var(--linha);border-radius:14px;padding:14px;margin:0 0 14px}
+  section h2{margin:0 0 4px;font-size:16px}
+  section h2 .num{display:inline-block;min-width:22px;height:22px;line-height:22px;text-align:center;
+    background:var(--bg3);border-radius:6px;font-size:12px;margin-right:8px;color:var(--txt2)}
+  .nota{color:var(--txt2);font-size:13.5px;margin:6px 0 12px}
+  .nota b{color:var(--txt)}
+  .botoes{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+  button{background:var(--bg3);color:var(--txt);border:1px solid var(--linha);border-radius:10px;
+    padding:12px 14px;font-size:15px;font-weight:500;font-family:inherit;min-height:46px}
+  button:active{background:#2a313b}
+  button:disabled{opacity:.4}
+  button.primario{background:var(--acao);border-color:var(--acao);color:#fff}
+  button.perigo{border-color:#5a2a2a;color:#ff9b95}
+  .estado{font-size:14px;padding:9px 11px;border-radius:9px;background:var(--bg3);
+    color:var(--txt2);margin:8px 0;word-break:break-word}
+  .estado.bom{color:var(--bom);background:#0d2a14}
+  .estado.ruim{color:var(--ruim);background:#2d1214}
+  .estado.atencao{color:var(--atencao);background:#2b2208}
+  .par{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--linha);font-size:13.5px}
+  .par:last-child{border:0}
+  .par span{color:var(--txt2);flex:0 0 46%}
+  .par b{font-weight:600;text-align:right;word-break:break-word;flex:1;font-variant-numeric:tabular-nums}
+  .vazio{color:var(--txt2);font-size:13.5px;margin:6px 0}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre-wrap;
+    word-break:break-all;background:#0a0d11;border:1px solid var(--linha);border-radius:9px;
+    padding:11px;max-height:50vh;overflow:auto;margin:8px 0}
+  .relogio{font-family:ui-monospace,Menlo,monospace;font-size:30px;font-weight:600;
+    text-align:center;padding:14px 0;letter-spacing:.02em;font-variant-numeric:tabular-nums}
+  label{display:block;font-size:13px;color:var(--txt2);margin:10px 0 4px}
+  input[type=number]{width:100%;background:var(--bg3);border:1px solid var(--linha);color:var(--txt);
+    border-radius:9px;padding:12px;font-size:16px;font-family:inherit}
+  .lado{display:flex;gap:10px}.lado>div{flex:1}
+  .run{border-left:3px solid var(--linha);padding:9px 0 9px 11px;margin:10px 0;font-size:13.5px}
+  .run.bom{border-color:var(--bom)}.run.ruim{border-color:var(--ruim)}.run.atencao{border-color:var(--atencao)}
+  .run-top{display:flex;justify-content:space-between;gap:8px}
+  .run-top span{color:var(--txt2);font-size:12px}
+  .run-meta{color:var(--txt2);font-size:12.5px;margin:3px 0}
+  .run-veredito{font-weight:600;margin:4px 0}
+  .run.bom .run-veredito{color:var(--bom)}.run.ruim .run-veredito{color:var(--ruim)}
+  .run-lacunas{color:var(--txt2);font-size:12px;font-family:ui-monospace,Menlo,monospace;margin-top:4px}
+  .toast{position:fixed;left:16px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));
+    background:#f0f6fc;color:#0e1116;padding:13px 15px;border-radius:11px;font-size:14.5px;font-weight:500;
+    opacity:0;transform:translateY(16px);transition:.22s;pointer-events:none;z-index:50;text-align:center}
+  .toast.visivel{opacity:1;transform:none}
+  .toast.erro{background:#f85149;color:#fff}
+  .passos{margin:8px 0 0;padding-left:20px;color:var(--txt2);font-size:13.5px}
+  .passos li{margin:5px 0}
+  .passos b{color:var(--txt)}
+  .aviso{background:#2b2208;border:1px solid #4a3c10;color:#e3b341;border-radius:11px;padding:12px;
+    font-size:13.5px;margin:0 0 14px}
+  .aviso.oculto{display:none}
+  .erro-fatal{background:#2d1214;color:#ff9b95;padding:14px;font-size:12px;white-space:pre-wrap}
+  audio{width:100%;margin:8px 0}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Teste de áudio longo — iOS</h1>
+  <p>Mede o que um web app entrega de áudio de 25+ min, e o que não entrega.</p>
+</header>
+
+<nav class="abas">
+  <button class="aba ativa" data-alvo="p-audio">Áudio 1–4</button>
+  <button class="aba" data-alvo="p-storage">Offline 5–6</button>
+  <button class="aba" data-alvo="p-push">Push 7–8</button>
+  <button class="aba" data-alvo="p-log">Log</button>
+  <button class="aba" data-alvo="p-resumo">Resumo</button>
+  <button class="aba" data-alvo="p-info">Aparelho</button>
+</nav>
+
+<main>
+
+<div class="aviso oculto" id="aviso-instalar">
+  <b>Não está instalada na tela de início.</b> Os testes 4 e 7 dependem disso.
+  No Safari: botão Compartilhar → <b>Adicionar à Tela de Início</b> → abrir pelo ícone.
+</div>
+
+<!-- ============ ÁUDIO: TESTES 1 a 4 ============ -->
+<div class="painel" id="p-audio">
+
+  <section>
+    <h2>Reprodução</h2>
+    <audio id="audio" preload="auto" playsinline src="audio/teste-27min.mp3"></audio>
+    <div class="relogio" id="run-posicao">--:-- / --:--</div>
+    <div class="estado" id="run-estado">Parado</div>
+    <div class="estado" id="wl-estado">Wake Lock: nada solicitado</div>
+    <div class="botoes">
+      <button id="b-pausar">Pausar / retomar</button>
+      <button id="b-parar" class="perigo">Parar e fechar a run</button>
+    </div>
+    <p class="nota">O áudio fala “minuto N” a cada minuto. Se parar, você ouve onde
+    parou — e o log diz o segundo exato.</p>
+  </section>
+
+  <section>
+    <h2><span class="num">1</span>Baseline: tela bloqueada, SEM Wake Lock</h2>
+    <p class="nota">O número que importa: o áudio morre no bloqueio? Em que segundo?</p>
+    <div class="botoes"><button id="b-start-sem-wl" class="primario">Iniciar teste 1</button></div>
+    <ol class="passos">
+      <li>Toque em <b>Iniciar teste 1</b> e confirme que o áudio começou.</li>
+      <li><b>Aperte o botão lateral</b> para bloquear a tela.</li>
+      <li>Deixe o telefone parado <b>26 minutos</b>. Não abra nada.</li>
+      <li>Desbloqueie, volte ao app e toque em <b>Parar e fechar a run</b>.</li>
+      <li>O veredito aparece em “Runs medidas”, embaixo.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2><span class="num">2</span>O mesmo COM Wake Lock</h2>
+    <p class="nota">O Wake Lock impede a tela de <b>apagar sozinha</b>. Ele não impede
+    o botão lateral, e o sistema libera o sentinel quando a página fica oculta — por
+    isso o app o repede ao voltar. Rode as duas variantes:</p>
+    <ol class="passos">
+      <li><b>Variante A — deixar apagar sozinha:</b> inicie, apoie o telefone e
+        <b>não toque em nada</b>. Se o Wake Lock funciona, a tela fica acesa a sessão inteira.</li>
+      <li><b>Variante B — bloquear à mão:</b> inicie e aperte o botão lateral.
+        Mede se o áudio sobrevive mesmo com o Wake Lock pedido.</li>
+    </ol>
+    <div class="botoes"><button id="b-start-com-wl" class="primario">Iniciar teste 2</button></div>
+    <label>Bateria antes (%) — leia nos Ajustes e anote antes de começar</label>
+    <div class="lado">
+      <div><input id="bateria-antes" type="number" min="0" max="100" inputmode="numeric" placeholder="ex. 84"></div>
+      <div><input id="bateria-depois" type="number" min="0" max="100" inputmode="numeric" placeholder="depois, ex. 71"></div>
+    </div>
+    <div class="botoes"><button id="b-bateria-salvar">Anotar bateria na última run</button></div>
+    <p class="nota">O Safari não expõe a Battery API — por isso é à mão. É o custo do
+    Wake Lock que você vai pesar contra o benefício.</p>
+  </section>
+
+  <section>
+    <h2><span class="num">3</span>Botão físico de silencioso</h2>
+    <p class="nota">JS não lê o botão. Você declara o estado, toca, e diz se ouviu.</p>
+    <div class="estado" id="silencioso-estado">Nada declarado</div>
+    <div class="botoes">
+      <button id="b-sil-ligado">Silencioso LIGADO</button>
+      <button id="b-sil-desligado">Silencioso desligado</button>
+    </div>
+    <p class="nota">Com o estado declarado, inicie um áudio (teste 1 ou 2) e responda:</p>
+    <div class="botoes">
+      <button id="b-sil-ouvi">Ouvi som</button>
+      <button id="b-sil-nao-ouvi">Não ouvi som</button>
+    </div>
+    <p class="nota">Alternativa: a Web Audio API às vezes ignora o botão de silencioso.
+    Se ignorar, é uma mitigação real para o produto.</p>
+    <div class="botoes">
+      <button id="b-sil-webaudio">Tocar tom de 3 s (Web Audio)</button>
+      <button id="b-sil-webaudio-ouvi">Ouvi o tom</button>
+      <button id="b-sil-webaudio-nao-ouvi">Não ouvi o tom</button>
+    </div>
+    <div id="silencioso-resultado"></div>
+  </section>
+
+  <section>
+    <h2><span class="num">4</span>Media Session — controles na tela de bloqueio</h2>
+    <div class="estado" id="ms-estado">Não aplicado</div>
+    <div class="botoes"><button id="b-ms-aplicar">Aplicar metadados e ações</button></div>
+    <ol class="passos">
+      <li>Inicie um áudio e bloqueie a tela.</li>
+      <li>Olhe a tela de bloqueio: aparece o título “Teste de áudio — 27 min”?</li>
+      <li>Toque em pausar, voltar e avançar <b>na tela de bloqueio</b>.</li>
+      <li>Volte ao app: cada controle que respondeu está contado aqui.</li>
+    </ol>
+    <div id="ms-eventos"></div>
+  </section>
+
+  <section>
+    <h2>Runs medidas</h2>
+    <div id="runs-lista"></div>
+  </section>
+
+</div>
+
+<!-- ============ OFFLINE: TESTES 5 e 6 ============ -->
+<div class="painel oculto" id="p-storage">
+
+  <section>
+    <h2><span class="num">5</span>Cota real de armazenamento</h2>
+    <div class="estado" id="cota-estado">Não medido</div>
+    <div id="cota-numeros"></div>
+    <div class="botoes">
+      <button id="b-cota-estimar">Ler estimate()</button>
+      <button id="b-cota-persistir">Pedir persistência</button>
+    </div>
+    <p class="nota"><b>O que o estimate() diz é promessa; o que a gravação consegue é
+    fato.</b> O teste grava blocos de 5 MB no IndexedDB até dar erro de cota, e
+    refina para 1 MB e 256 KB perto do limite.</p>
+    <label>Teto de segurança do teste (MB) — para não lotar o telefone</label>
+    <input id="cota-teto" type="number" min="50" step="50" value="2000" inputmode="numeric">
+    <div class="botoes">
+      <button id="b-cota-encher" class="primario">Encher até falhar</button>
+      <button id="b-cota-parar" disabled>Parar</button>
+      <button id="b-cota-limpar" class="perigo">Apagar os blocos</button>
+    </div>
+    <div class="mono" id="cota-progresso"></div>
+    <div class="estado" id="cota-sessoes"></div>
+    <p class="nota">Se bater no teto em vez de dar erro, o limite real é maior que o
+    número medido — o resumo diz isso com essas palavras. <b>Apague os blocos quando
+    terminar.</b></p>
+  </section>
+
+  <section>
+    <h2><span class="num">6</span>Baixar como Blob e tocar sem rede</h2>
+    <p class="nota">Esse é o padrão do plano: o áudio fica no IndexedDB como Blob,
+    fora do service worker. O teste confere o que o player precisa — tocar,
+    ler a duração e <b>dar seek</b> (retomar a sessão no meio).</p>
+    <div class="estado" id="dl-estado">Nada baixado</div>
+    <div id="dl-guardado"></div>
+    <div class="mono" id="dl-progresso"></div>
+    <div class="botoes">
+      <button id="b-dl-baixar" class="primario">Baixar 19 MB para o IndexedDB</button>
+      <button id="b-dl-tocar-blob" disabled>Tocar do blob</button>
+      <button id="b-dl-apagar" class="perigo">Apagar o blob</button>
+    </div>
+    <ol class="passos">
+      <li>Toque em <b>Baixar</b> e espere terminar.</li>
+      <li>Ligue o <b>modo avião</b> nos Ajustes.</li>
+      <li>Volte e toque em <b>Tocar do blob</b>. O resumo registra se a rede estava
+        desligada — se estiver ligada, o teste não vale como offline.</li>
+    </ol>
+  </section>
+
+</div>
+
+<!-- ============ PUSH: TESTES 7 e 8 ============ -->
+<div class="painel oculto" id="p-push">
+
+  <section>
+    <h2><span class="num">7</span>Web push em PWA instalada</h2>
+    <p class="nota">É o mecanismo de retenção do protocolo de 21 dias. No iOS só
+    funciona na PWA instalada na tela de início.</p>
+    <div class="estado" id="push-estado">Permissão não pedida</div>
+    <div class="botoes">
+      <button id="b-push-permissao" class="primario">1. Pedir permissão</button>
+      <button id="b-push-local">2. Notificação agora</button>
+    </div>
+    <div class="botoes">
+      <button id="b-push-local-30s">3. Agendar para 30 s (depois saia do app)</button>
+      <button id="b-push-inscrever">4. Criar inscrição de push</button>
+    </div>
+    <p class="nota">O passo 3 testa se um agendamento local sobrevive ao app em
+    segundo plano — provavelmente não, e é exatamente isso que prova que o lembrete
+    diário precisa vir do servidor. O passo 4 cria a inscrição real com chave VAPID:
+    se ela nasce, o aparelho aceita push.</p>
+    <div class="mono" id="push-inscricao"></div>
+  </section>
+
+  <section>
+    <h2><span class="num">8</span>Sobrevive a 7 dias sem abrir?</h2>
+    <p class="nota">Instrumentado agora, conferido depois. Grava 4 MB no IndexedDB
+    <b>e</b> 4 MB no Cache Storage — a alegação dos 7 dias é sobre o Cache Storage,
+    então vale medir os dois lado a lado.</p>
+    <div class="estado" id="marco-estado">Nenhum marco criado</div>
+    <div id="marco-detalhe"></div>
+    <div class="botoes">
+      <button id="b-marco-criar" class="primario">Criar marco</button>
+      <button id="b-marco-verificar">Verificar agora</button>
+    </div>
+    <ol class="passos">
+      <li>Toque em <b>Criar marco</b> hoje.</li>
+      <li><b>Não abra este app por mais de 7 dias.</b></li>
+      <li>Depois, abra e toque em <b>Verificar</b>. O resumo diz o que sobreviveu.</li>
+    </ol>
+  </section>
+
+</div>
+
+<!-- ============ LOG ============ -->
+<div class="painel oculto" id="p-log">
+  <section>
+    <h2>Log persistente (IndexedDB)</h2>
+    <p class="nota">Gravado com timestamp a cada evento. Sobrevive ao bloqueio, ao
+    descarte da aba e ao fechamento do app.</p>
+    <div class="botoes">
+      <button id="b-log-atualizar" class="primario">Atualizar</button>
+      <button id="b-apagar-tudo" class="perigo">Apagar todos os dados</button>
+    </div>
+    <div class="estado" id="log-contagem"></div>
+    <div class="mono" id="log"></div>
+  </section>
+</div>
+
+<!-- ============ RESUMO ============ -->
+<div class="painel oculto" id="p-resumo">
+  <section>
+    <h2>Resumo para reportar</h2>
+    <p class="nota">Gerado a partir do que foi medido. Copie e me mande.</p>
+    <div class="botoes">
+      <button id="b-resumo-gerar" class="primario">Gerar</button>
+      <button id="b-resumo-copiar">Copiar</button>
+      <button id="b-resumo-baixar">Baixar .txt</button>
+    </div>
+    <div class="mono" id="resumo"></div>
+  </section>
+</div>
+
+<!-- ============ APARELHO ============ -->
+<div class="painel oculto" id="p-info">
+  <section>
+    <h2>Aparelho e APIs</h2>
+    <div id="info-dispositivo"></div>
+  </section>
+</div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
