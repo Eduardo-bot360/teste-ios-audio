@@ -8,14 +8,18 @@ parar, você ouve onde parou — e o log registra o segundo exato.
 
 ---
 
-## 1. Subir a página por HTTPS
+## 1. Abrir a página
 
-HTTPS é obrigatório: service worker, Wake Lock e push só funcionam em contexto
-seguro.
+**https://eduardo-bot360.github.io/teste-ios-audio/**
 
-### Opção A — túnel (rápido, para os testes 1 a 7)
+URL fixa, no ar, HTTPS. Serve para os 8 testes. Não precisa ligar nada nesta
+máquina — abra direto no Safari do iPhone.
 
-Dois comandos, cada um na sua aba do terminal:
+<details>
+<summary>Alternativa: rodar da sua máquina por túnel</summary>
+
+Só se você quiser testar uma alteração antes de publicar. Dois comandos, cada um
+na sua aba:
 
 ```bash
 python3 "/Users/eduardo/APP LIVROS/teste-ios/servidor.py" 8787
@@ -25,23 +29,18 @@ python3 "/Users/eduardo/APP LIVROS/teste-ios/servidor.py" 8787
 cloudflared tunnel --url http://localhost:8787
 ```
 
-O segundo imprime uma URL `https://....trycloudflare.com`. Abra essa URL no
-Safari do iPhone.
+O segundo imprime uma URL `https://....trycloudflare.com`.
 
-> **O túnel não serve para o teste 8.** A URL muda a cada vez que você reinicia
-> o `cloudflared`, e o IndexedDB é preso à origem — origem nova, dados zerados.
-> Para o teste de 7 dias você precisa de uma URL fixa (opção B).
+**Não use o túnel para o teste 8.** A URL muda a cada reinício, e o IndexedDB é
+preso à origem — origem nova, dados zerados.
 
-### Opção B — GitHub Pages (URL fixa, serve para os 8 testes)
-
-Se eu já tiver publicado, a URL está no fim deste arquivo. Se não, é isso:
+Para publicar uma alteração na URL fixa:
 
 ```bash
-cd "/Users/eduardo/APP LIVROS/teste-ios" && git init -b main && git add -A && git commit -m "pagina de teste ios" && gh repo create teste-ios-audio --public --source=. --push && gh api -X POST repos/:owner/teste-ios-audio/pages -f build_type=legacy -f 'source[branch]=main' -f 'source[path]=/'
+cd "/Users/eduardo/APP LIVROS/teste-ios" && git add -A && git commit -m "ajuste" && git push
 ```
 
-Leva ~2 min para o Pages subir. A URL fica
-`https://<seu-usuario>.github.io/teste-ios-audio/`.
+</details>
 
 ---
 
@@ -133,7 +132,7 @@ Aba **Push 7–8**, na ordem dos botões:
 
 ### Teste 8 — sobrevive a 7 dias? (1 min hoje, 1 min em 8 dias)
 
-Só vale com URL fixa (opção B acima).
+Só vale na URL fixa do Pages — pelo túnel os dados zeram.
 
 1. **Criar marco** hoje.
 2. **Não abra este app por mais de 7 dias.**
@@ -156,17 +155,12 @@ Ele já vem com o veredito de cada teste, a cota medida e **quantas sessões de
 - **O áudio não toca** — confira se a URL é `https://`. Em `http://` o iOS
   bloqueia metade das APIs.
 - **O log sumiu** — a URL mudou. O IndexedDB é preso à origem; URL nova, dados
-  novos. Use a opção B.
+  novos. Use a URL fixa do Pages.
 - **Quero começar de zero** — aba **Log** → **Apagar todos os dados**.
 
 ---
 
-## URL no ar agora (túnel)
+## Repositório
 
-**https://equal-visual-exhaust-robots.trycloudflare.com**
-
-Vale enquanto o servidor e o `cloudflared` estiverem rodando nesta máquina.
-Serve para os testes 1 a 7. Para o teste 8 (7 dias), use a opção B.
-
-Para subir de novo depois de reiniciar a máquina, os dois comandos da opção A.
-A URL do túnel muda a cada reinício — e com ela o IndexedDB zera.
+`https://github.com/Eduardo-bot360/teste-ios-audio` — a página é servida por
+GitHub Pages a partir do branch `main`.
