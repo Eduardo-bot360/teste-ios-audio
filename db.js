@@ -74,6 +74,12 @@ export async function logar(teste, evento, detalhe, runId) {
   return reg;
 }
 
+export async function lerLogPorRun(runId) {
+  const s = await tx('log', 'readonly');
+  const todos = await pedido(s.index('runId').getAll(runId));
+  return todos.sort((a, b) => a.ts - b.ts);
+}
+
 export async function lerLog(limite) {
   const s = await tx('log', 'readonly');
   const todos = await pedido(s.getAll());

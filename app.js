@@ -65,10 +65,23 @@ function modoExibicao() {
   return { displayMode: achado || 'desconhecido', navigatorStandalone: navStandalone };
 }
 
+// A versão do iOS decide quais testes são possíveis: Wake Lock e Web Push só
+// existem a partir do 16.4. Num aparelho mais antigo os testes 2 e 7 não falham
+// — eles não têm como rodar, e dizer "falhou" seria mentira.
+function versaoIOS() {
+  const m = navigator.userAgent.match(/(?:iPhone|iPad|CPU) OS (\d+)[_.](\d+)(?:[_.](\d+))?/)
+    || navigator.userAgent.match(/Version\/(\d+)\.(\d+)/);
+  if (!m) return null;
+  const maior = +m[1], menor = +m[2];
+  return { texto: `${maior}.${menor}${m[3] ? '.' + m[3] : ''}`, maior, menor,
+           suporta164: maior > 16 || (maior === 16 && menor >= 4) };
+}
+
 function infoDispositivo() {
   const m = modoExibicao();
   return {
     ua: navigator.userAgent,
+    ios: versaoIOS(),
     plataforma: navigator.platform,
     idioma: navigator.language,
     tela: `${screen.width}x${screen.height} @${devicePixelRatio}x`,
@@ -94,6 +107,9 @@ async function mostrarInfo() {
   const i = infoDispositivo();
   await db.setMeta('dispositivo', i);
   const linhas = [
+    ['Versão do iOS', i.ios
+      ? i.ios.texto + (i.ios.suporta164 ? '' : ' — abaixo de 16.4: sem Wake Lock e sem Web Push')
+      : 'não identificada'],
     ['Contexto seguro (HTTPS)', i.seguro ? 'sim' : 'NÃO — service worker e Wake Lock não funcionam'],
     ['Instalada na tela de início', i.instalada ? 'SIM' : 'não (rodando no Safari) — teste 7 exige instalada'],
     ['display-mode', i.displayMode],
@@ -111,6 +127,14 @@ async function mostrarInfo() {
   $('info-dispositivo').innerHTML = linhas
     .map(([k, v]) => `<div class="par"><span>${k}</span><b>${v}</b></div>`).join('');
   if (!i.instalada) $('aviso-instalar').classList.remove('oculto');
+  if (!i.wakeLockAPI || !i.pushManagerAPI) {
+    const faltam = [!i.wakeLockAPI && 'Wake Lock', !i.pushManagerAPI && 'Web Push'].filter(Boolean);
+    $('aviso-api').innerHTML = `<b>Este iPhone não tem ${faltam.join(' nem ')}.</b> `
+      + `Essas APIs só existem no iOS 16.4+${i.ios ? ` e este está no ${i.ios.texto}` : ''}. `
+      + `Os testes ${!i.wakeLockAPI ? '2' : ''}${(!i.wakeLockAPI && !i.pushManagerAPI) ? ' e ' : ''}${!i.pushManagerAPI ? '7' : ''} `
+      + `não têm como rodar aqui — não é falha do produto, é ausência da API. Os outros rodam normalmente.`;
+    $('aviso-api').classList.remove('oculto');
+  }
 }
 
 // ================================================================
@@ -242,6 +266,7 @@ async function iniciarRun(opcoes) {
   await db.salvarRun(est.run);
   await log('run', 'inicio', est.run);
   db.gravarHb(est.runId, a.currentTime, a.paused, 'inicio');
+  guardarDuracao(est.runId);
 
   if (!comWakeLock) {
     await soltarWakeLock();
@@ -270,6 +295,20 @@ async function iniciarRun(opcoes) {
   renderRuns();
 }
 
+// A duração do arquivo é o que diz onde a reprodução termina — sem ela, o
+// silêncio do telefone parado depois do fim parece uma falha.
+async function guardarDuracao(runId) {
+  const a = audio();
+  for (let i = 0; i < 20; i++) {
+    if (isFinite(a.duration) && a.duration > 0) {
+      const run = await db.lerRun(runId);
+      if (run && !run.duracaoMidia) { run.duracaoMidia = +a.duration.toFixed(1); await db.salvarRun(run); }
+      return;
+    }
+    await dormir(500);
+  }
+}
+
 // Fecha a run no banco: usado tanto pelo botão Parar quanto ao iniciar outra.
 async function encerrarRunNoBanco(runId, motivo) {
   const a = audio();
@@ -279,6 +318,7 @@ async function encerrarRunNoBanco(runId, motivo) {
   if (run) {
     run.fim = Date.now();
     run.posicaoFinal = a.currentTime;
+    if (!run.duracaoMidia && isFinite(a.duration) && a.duration > 0) run.duracaoMidia = +a.duration.toFixed(1);
     run.bateriaDepois = numeroOuNull($('bateria-depois').value);
     await db.salvarRun(run);
   }
@@ -311,53 +351,91 @@ function atualizarPainelRun() {
 }
 
 // Análise: a run tocou até o fim? Se parou, em que segundo?
+// Análise: o áudio tocou até o fim? Se parou, em que segundo? E — a pergunta
+// que decide tudo — a tela chegou a ser ocultada durante a reprodução?
+//
+// Duas armadilhas que esta função precisa evitar:
+//  1. O silêncio DEPOIS do fim do arquivo não é uma falha. Se o áudio chegou a
+//     27:00 e o telefone ficou 4 h parado, o áudio "não avançou" porque acabou,
+//     não porque morreu. Lacunas a partir do fim são ignoradas.
+//  2. "Tocou inteiro" só prova algo sobre o bloqueio se a tela foi ocultada.
+//     Sem nenhum `visibilitychange: hidden`, o teste não testou o bloqueio.
 export async function analisarRun(runId) {
   const run = await db.lerRun(runId);
   const hbs = await db.lerHb(runId);
   if (!run || hbs.length < 2) return { runId, veredito: 'sem dados suficientes', hbs: hbs.length };
 
-  const primeiro = hbs[0];
-  const ultimo = hbs[hbs.length - 1];
+  const logs = await db.lerLogPorRun(runId);
+  const terminou = logs.some((l) => l.teste === 'audio' && l.evento === 'ended');
+
+  // quando a tela foi ocultada, e em que segundo do áudio
+  const ocultacoes = logs
+    .filter((l) => l.teste === 'pagina' && l.evento === 'visibilitychange'
+      && l.detalhe && l.detalhe.visibilidade === 'hidden')
+    .map((l) => +(l.detalhe.t || 0).toFixed(1));
+
+  const maxAudio = hbs.reduce((m, h) => Math.max(m, h.audioTime), 0);
+  const duracao = run.duracaoMidia || (terminou ? maxAudio : null);
+  const chegouAoFim = terminou || (duracao != null && maxAudio >= duracao - 3);
+
+  // Janela de reprodução. Só encurta quando o áudio chegou ao FIM DO ARQUIVO:
+  // aí o que vem depois é telefone parado com o áudio acabado, não falha.
+  // Se o áudio parou de subir ANTES do fim, a lacuna é justamente a falha que
+  // estamos medindo e tem de continuar dentro da janela.
+  let iFim = hbs.length - 1;
+  if (chegouAoFim) {
+    for (let i = 0; i < hbs.length; i++) {
+      if (hbs[i].audioTime >= maxAudio - 0.5) { iFim = i; break; }
+    }
+  }
+  const janela = hbs.slice(0, iFim + 1);
+  const lacunasPosFim = hbs.length - 1 - iFim;
+
   const lacunas = [];
-  for (let i = 1; i < hbs.length; i++) {
-    const dw = (hbs[i].ts - hbs[i - 1].ts) / 1000;         // segundos de relógio
-    const da = hbs[i].audioTime - hbs[i - 1].audioTime;     // segundos de áudio
+  for (let i = 1; i < janela.length; i++) {
+    const dw = (janela[i].ts - janela[i - 1].ts) / 1000;      // segundos de relógio
+    const da = janela[i].audioTime - janela[i - 1].audioTime;  // segundos de áudio
     if (dw >= GAP_MINIMO_S) {
       lacunas.push({
-        emSegundoDoAudio: +hbs[i - 1].audioTime.toFixed(1),
+        emSegundoDoAudio: +janela[i - 1].audioTime.toFixed(1),
         relogioParado: +dw.toFixed(1),
         audioAvancou: +da.toFixed(1),
         proporcao: dw > 0 ? +(da / dw).toFixed(3) : 0,
-        parouEm: +(hbs[i - 1].audioTime + Math.max(0, da)).toFixed(1),
-        voltouEm: +hbs[i].audioTime.toFixed(1),
-        pausadoNoRetorno: hbs[i].pausado,
+        parouEm: +(janela[i - 1].audioTime + Math.max(0, da)).toFixed(1),
+        voltouEm: +janela[i].audioTime.toFixed(1),
+        pausadoNoRetorno: janela[i].pausado,
       });
     }
   }
 
-  const duracaoAudio = +(ultimo.audioTime - primeiro.audioTime).toFixed(1);
-  const duracaoRelogio = +((ultimo.ts - primeiro.ts) / 1000).toFixed(1);
+  const duracaoAudio = +(janela[janela.length - 1].audioTime - janela[0].audioTime).toFixed(1);
+  const duracaoRelogio = +((janela[janela.length - 1].ts - janela[0].ts) / 1000).toFixed(1);
   const proporcaoGeral = duracaoRelogio > 0 ? +(duracaoAudio / duracaoRelogio).toFixed(3) : 0;
 
+  // o aviso que impede a leitura errada do resultado
+  const semBloqueio = ocultacoes.length === 0;
+  const ressalva = semBloqueio
+    ? ' ATENÇÃO: a tela NUNCA foi ocultada nesta run, então ela não testou o bloqueio.'
+    : ` A tela foi ocultada ${ocultacoes.length}x durante a reprodução (em ${ocultacoes.map(mmss).join(', ')}).`;
+
   let veredito;
-  if (!lacunas.length) {
-    veredito = proporcaoGeral > 0.9
-      ? 'áudio avançou de ponta a ponta — a página nunca foi congelada (nenhuma lacuna > 12 s)'
-      : 'página ficou viva o tempo todo, mas o áudio avançou menos que o relógio (pausas registradas)';
+  const piores = lacunas.filter((l) => l.proporcao < 0.9);
+  if (chegouAoFim && !piores.length) {
+    veredito = `TOCOU INTEIRO até ${mmss(maxAudio)} sem interrupção.` + ressalva;
+  } else if (!lacunas.length) {
+    veredito = (proporcaoGeral > 0.9
+      ? `áudio avançou de ponta a ponta até ${mmss(maxAudio)}, sem lacuna > ${GAP_MINIMO_S} s`
+      : `o áudio avançou menos que o relógio (${Math.round(proporcaoGeral * 100)}%) sem lacuna detectada — houve pausa`) + ressalva;
+  } else if (!piores.length) {
+    veredito = `SOBREVIVEU: a página foi congelada ${lacunas.length}x e o áudio continuou tocando em todas.` + ressalva;
   } else {
-    const piores = lacunas.filter((l) => l.proporcao < 0.9);
-    if (!piores.length) {
-      veredito = `SOBREVIVEU: a página foi congelada ${lacunas.length}x e o áudio continuou tocando em todas`;
-    } else {
-      const p = piores[0];
-      // o que decide a frase é quanto o áudio andou, não a proporção:
-      // 42 s de 1200 é proporção baixa, mas não é "não avançou nada"
-      if (p.audioAvancou < 3) {
-        veredito = `PAROU em ${mmss(p.parouEm)} (${p.parouEm} s) — morreu no bloqueio, não avançou nada nos ${p.relogioParado} s seguintes`;
-      } else {
-        veredito = `PAROU em ${mmss(p.parouEm)} (${p.parouEm} s) — ainda tocou ${p.audioAvancou} s depois do bloqueio e então morreu (${p.relogioParado} s de tela apagada)`;
-      }
-    }
+    const p = piores[0];
+    // o que decide a frase é quanto o áudio andou, não a proporção:
+    // 42 s de 1200 é proporção baixa, mas não é "não avançou nada"
+    veredito = (p.audioAvancou < 3
+      ? `PAROU em ${mmss(p.parouEm)} (${p.parouEm} s) — morreu no bloqueio, não avançou nada nos ${p.relogioParado} s seguintes`
+      : `PAROU em ${mmss(p.parouEm)} (${p.parouEm} s) — ainda tocou ${p.audioAvancou} s depois do bloqueio e então morreu (${p.relogioParado} s de tela apagada)`)
+      + ressalva;
   }
 
   return {
@@ -367,7 +445,8 @@ export async function analisarRun(runId) {
     bateriaAntes: run.bateriaAntes, bateriaDepois: run.bateriaDepois,
     bateriaGasta: (run.bateriaAntes != null && run.bateriaDepois != null)
       ? +(run.bateriaAntes - run.bateriaDepois).toFixed(1) : null,
-    posicaoFinal: +(ultimo.audioTime).toFixed(1),
+    posicaoFinal: +maxAudio.toFixed(1), duracaoMidia: duracao, chegouAoFim,
+    ocultacoes, semBloqueio, lacunasPosFim,
     duracaoAudio, duracaoRelogio, proporcaoGeral,
     heartbeats: hbs.length, lacunas, veredito,
   };
@@ -975,6 +1054,8 @@ async function gerarResumo() {
   p('');
   p('APARELHO E CONTEXTO');
   p(`  User agent: ${info.ua}`);
+  p(`  Versão do iOS: ${info.ios ? info.ios.texto : 'não identificada'}`
+    + `${info.ios && !info.ios.suporta164 ? ' — ABAIXO DE 16.4: Wake Lock e Web Push não existem neste aparelho' : ''}`);
   p(`  HTTPS (contexto seguro): ${info.seguro ? 'sim' : 'NÃO'}`);
   p(`  Rodando como PWA instalada: ${info.instalada ? 'SIM' : 'não (Safari) — testes 7 e 4 pedem instalada'}`);
   p(`  APIs presentes: Wake Lock ${info.wakeLockAPI ? 'sim' : 'NÃO'} · Media Session ${info.mediaSessionAPI ? 'sim' : 'NÃO'}`
@@ -987,13 +1068,23 @@ async function gerarResumo() {
     p(`  [${new Date(a.inicio).toLocaleString('pt-BR')}] ${a.rotulo}`);
     p(`    Veredito: ${a.veredito}`);
     p(`    Áudio avançou ${mmss(a.duracaoAudio)} em ${mmss(a.duracaoRelogio)} de relógio (${Math.round(a.proporcaoGeral * 100)}%)`);
+    p(`    Chegou ao fim do arquivo: ${a.chegouAoFim ? 'SIM (' + mmss(a.posicaoFinal) + ')' : 'não, parou em ' + mmss(a.posicaoFinal)}`);
+    p(`    Tela ocultada durante a reprodução: ${a.ocultacoes && a.ocultacoes.length
+      ? a.ocultacoes.length + 'x, em ' + a.ocultacoes.map(mmss).join(', ')
+      : 'NUNCA — esta run não testou o bloqueio'}`);
+    if (a.lacunasPosFim) p(`    (${a.lacunasPosFim} lacuna(s) depois do fim do arquivo, ignoradas: telefone parado com o áudio já acabado)`);
     a.lacunas.forEach((l) => p(`    Tela apagada no segundo ${l.emSegundoDoAudio} (${mmss(l.emSegundoDoAudio)}): ficou ${l.relogioParado}s fora,`
       + ` o áudio andou ${l.audioAvancou}s → ${l.audioAvancou < 3 ? 'PAROU no bloqueio' : l.proporcao > 0.9 ? 'continuou tocando' : 'tocou mais ' + l.audioAvancou + 's e parou'}`
       + ` · no retorno estava ${l.pausadoNoRetorno ? 'PAUSADO' : 'tocando'} em ${mmss(l.voltouEm)}`));
   });
 
   cab('2. o mesmo COM wake lock ativo');
-  if (!comWL.length) p('  NÃO TESTADO.');
+  if (!info.wakeLockAPI) {
+    p('  IMPOSSÍVEL NESTE APARELHO: a Wake Lock API não existe aqui'
+      + `${info.ios ? ' (iOS ' + info.ios.texto + '; a API exige 16.4+)' : ''}.`);
+    p('  Não é falha: não há o que ativar. Para medir o Wake Lock, repetir o teste');
+    p('  num iPhone com iOS 16.4 ou mais novo.');
+  } else if (!comWL.length) p('  NÃO TESTADO.');
   comWL.forEach((a) => {
     p(`  [${new Date(a.inicio).toLocaleString('pt-BR')}] ${a.rotulo}`);
     p(`    Veredito: ${a.veredito}`);
@@ -1060,6 +1151,13 @@ async function gerarResumo() {
   } else p('  Reprodução do blob NÃO TESTADA.');
 
   cab('7. web push em pwa instalada');
+  if (!info.pushManagerAPI) {
+    p('  IMPOSSÍVEL NESTE APARELHO: não existe PushManager aqui'
+      + `${info.ios ? ' (iOS ' + info.ios.texto + '; web push no iOS exige 16.4+)' : ''}.`);
+    p('  Consequência de produto: assinante em iOS abaixo de 16.4 não recebe lembrete');
+    p('  nenhum por notificação, instalado ou não. Para esse público o lembrete tem');
+    p('  de ser por outro canal (e-mail) ou não existir.');
+  }
   p(`  Rodando instalada: ${info.instalada ? 'sim' : 'NÃO — no iOS, push exige instalada na tela de início'}`);
   p(`  Permissão de notificação: ${perm ? perm.resultado : 'não pedida'}`);
   p(`  Notificação local exibida: ${local ? 'sim' : 'não'}`);
@@ -1082,10 +1180,25 @@ async function gerarResumo() {
   }
 
   cab('o que isso decide no produto');
-  const baseParou = semWL.some((a) => /PAROU/.test(a.veredito));
-  const wlResolveu = comWL.some((a) => /SOBREVIVEU|ponta a ponta/.test(a.veredito));
-  if (semWL.length) p(`  Tela de sessão: sem Wake Lock o áudio ${baseParou ? 'PAROU' : 'sobreviveu'} ao bloqueio.`);
-  if (comWL.length) p(`  Com Wake Lock ${wlResolveu ? 'sobreviveu — a tela de sessão precisa manter o Wake Lock ativo' : 'ainda não resolveu — ver as lacunas acima'}.`);
+  const comBloqueio = semWL.filter((a) => !a.semBloqueio);
+  const sobreviveuBloqueado = comBloqueio.filter((a) => a.chegouAoFim && !/PAROU/.test(a.veredito));
+  const morreuBloqueado = comBloqueio.filter((a) => /PAROU/.test(a.veredito));
+  if (!semWL.length) {
+    p('  Tela de sessão: sem baseline medido, nada a concluir.');
+  } else if (!comBloqueio.length) {
+    p('  Tela de sessão: NADA A CONCLUIR — nenhuma run teve a tela ocultada, então');
+    p('  o bloqueio não foi testado. Repetir bloqueando a tela de verdade.');
+  } else if (sobreviveuBloqueado.length && !morreuBloqueado.length) {
+    p(`  Tela de sessão: o áudio SOBREVIVEU ao bloqueio em ${sobreviveuBloqueado.length} de ${comBloqueio.length} run(s),`);
+    p(`  tocando inteiro com a tela apagada${info.instalada ? ' na PWA instalada' : ' no Safari, sem nem instalar'}.`);
+    p('  Se isso se repetir num iOS atual, o Wake Lock deixa de ser requisito — e com');
+    p('  ele caem o gasto de bateria e a instrução de manter o telefone destravado.');
+    p(`  RESSALVA: medido em ${comBloqueio.length} run(s), num aparelho${info.ios ? ' em iOS ' + info.ios.texto : ''}.`);
+    p('  Confirmar num iPhone com iOS atual antes de desenhar a tela de sessão em cima disso.');
+  } else {
+    p(`  Tela de sessão: o áudio PAROU ao bloqueio em ${morreuBloqueado.length} de ${comBloqueio.length} run(s) sem Wake Lock.`);
+  }
+  if (comWL.length) p(`  Com Wake Lock: ${comWL.some((a) => /SOBREVIVEU|TOCOU INTEIRO/.test(a.veredito)) ? 'sobreviveu — manter o Wake Lock ativo na tela de sessão' : 'ainda não resolveu — ver as lacunas acima'}.`);
   if (cota) {
     const n = Math.floor(cota.bytesGravados / BYTES_SESSAO_25MIN);
     p(`  Offline: dá para prometer ${n} ${n === 1 ? 'sessão' : 'sessões'} de 25 min baixadas${cota.encerradoPor === 'teto' ? ' (no mínimo)' : ''}.`);
